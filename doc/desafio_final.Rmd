@@ -1,0 +1,631 @@
+---
+title: "Trabalho Final - Disciplina de Análise com R"
+author: "Gustavo Costa / Lourenço Jacobs / Vinícius Valim"
+date: "21 de maio de 2019"
+output:
+  html_document: 
+    theme: paper
+    toc: yes
+    toc_float: yes
+    toc_depth: 3
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo = F, warning = F, message = F}
+#install.packages(c("readr","janitor","dplyr","raster","skimr","ggplot2","gapminder","knitr","leaflet","maptools"))
+#mapsBR deve ser instalado manualmente do arquivo lgsilvaesilva-mapsBR-8aef24e.tar.gz
+#install.packages('sf', repos='http://cran.rstudio.com/')
+#install.packages("rgeos", repos="http://R-Forge.R-project.org")
+
+library(readr)
+library(janitor)
+library(dplyr)
+library(raster)
+library(skimr)
+library(ggplot2)
+library(gapminder)
+library(knitr)
+library(leaflet)
+library(mapsBR)
+library(sf)
+library(rgeos)
+library(maptools)
+```
+
+```{r echo = F, warning = F, message = F}
+
+idese <- readRDS("../data/Idese Municipios 2007-2014.rds")
+idese <- clean_names(idese,case = c("snake"))
+
+felicidade <- read.csv("../data/felicidade_mundo.csv", sep=",", encoding = 'UTF-8', dec = '.', stringsAsFactors = F)
+felicidade <- clean_names(felicidade,case = c("snake"))
+```
+
+# **Análise sobre os dados do IDESE**
+
+<font size="3%" text-align="middle">Primeiramente, realizaremos uma análise sobre os dados do **Idese**, um indicador-síntese desenvolvido pela **Fundação de Economia e Estatística** com o propósito de mensurar o nível de **desenvolvimento socioeconômico** dos municípios gaúchos, bem como fornecer informações para o planejamento de políticas públicas. Desenvolvido com base no **IDHM**, ele se propõe a avaliar anualmente 12 indicadores que são agrupados em 3 blocos, Saúde, Educação e Renda.
+
+Para cada uma das variáveis que formam os blocos, é calculado um Índice que varia de 0 (sem desenvolvimento) a 1 (desenvolvimento total), e indica a posição relativa de todos os municípios do Estado. O índice final de cada bloco é a média aritmética dos valores das variáveis correspondentes.
+
+Considera-se a classificação do índice em muito alto (acima de 0,800), alto (entre 0,700 e 0,799), médio (entre 0,600 e 0,699), baixo (entre 0,500 e 0,599) e muito baixo (abaixo de 0,499) nível de desenvolvimento.</font>
+
+<center>
+<img src = "../img/rio-grande-do-sul.jpg" width="20%" heigth="20%">
+</center>
+
+```{r echo = F, warning = F, message = F}
+data(regMun) #carrega mapa com os municípios brasileiros
+
+regMun %<>% 
+  st_as_sf() %>% 
+  filter(UF == 'RS') %>%
+  mutate(.,COD = as.factor(COD))
+
+idese1 <- regMun %>% 
+  left_join(
+  y = idese,
+  by = c("COD" = "cod")
+)
+
+cores_escala <- c("#006400", "#228b22", "#ffff40", "#ff8c00", "#8b0000")
+escala <- c("1 - Muito Alto - 0,80 a 1,00","2 - Alto - 0,70 a 0,79","3 - Médio - 0,60 a 0,69","4 - Baixo - 0,50 a 0,59","5 - Muito Baixo - 0,00 a 0,49")
+
+```
+
+## Bloco Educação
+
+<font size="3%" text-align="middle">Para o Bloco de Educação, considerando os dados do ano mais recente da base de dados (2014), temos a seguinte distribuição do índice geral.</font>
+
+```{r echo = F, warning = F, message = F}
+idese_educacao <- idese1 %>%
+  filter(ano == 2014) %>%
+  mutate(classificacao_educacao = as.factor(ifelse(bloco_educacao >= 0.8, yes = '1 - Muito Alto',
+                                       no = ifelse(bloco_educacao >= 0.7, yes = '2 - Alto',
+                                       no = ifelse(bloco_educacao >= 0.6, yes = '3 - Médio',
+                                       no = ifelse(bloco_educacao >= 0.5, yes = '4 - Baixo',
+                                       no = '5 - Muito Baixo')))))) %>%
+  mutate(cor_educacao = ifelse(classificacao_educacao == '1 - Muito Alto', yes = '#006400',
+                   no = ifelse(classificacao_educacao == '2 - Alto', yes = '#228b22',
+                   no = ifelse(classificacao_educacao == '3 - Médio', yes = '#ffff40',
+                   no = ifelse(classificacao_educacao == '4 - Baixo', yes = '#ff8c00',
+                   no = '#8b0000')))))
+
+tooltip <- sprintf("Cidade: <strong>%s</strong><br>
+                   <br>Índice de Educação: <strong>%s</strong><br>",
+                   idese_educacao$nome,
+                   idese_educacao$bloco_educacao)
+
+qpal <- colorFactor(palette = cores_escala, escala) 
+  
+mapa1 <- leaflet(idese_educacao) %>%
+   addProviderTiles(providers$CartoDB.Positron) %>%
+   addTiles() %>%
+   addPolygons(color      = ~cor_educacao,
+              stroke      = F,
+              weight      = 0.1,
+              fillOpacity = 0.7,
+              popup       = tooltip) %>%
+    addLegend("bottomleft",
+              pal = qpal,
+              values = escala,
+              title = "Índice de Educação")
+
+mapa1
+```
+
+<font size="3%" text-align="middle">Verificamos no mapa que os municípios de Alvorada, Charrua e Jaquirana foram os menos favorecidos em Educação no ano de 2014. Destacaram-se neste mesmo ano como as mais favorecidas as seguintes cidades:</font>
+
+```{r echo = F, warning = F, message = F}
+tabela1 <- data.frame(idese_educacao[, c("nome","bloco_educacao","populacao","classificacao_educacao")])
+tabela1$geometry <- NULL
+
+tabela1 %>%
+  filter(classificacao_educacao == '1 - Muito Alto') %>%
+  arrange(desc(bloco_educacao)) %>%
+  mutate(posicao = row_number()) %>%
+  kable()
+```
+
+<font size="3%" text-align="middle">As 3 primeiras cidades com maior índice de educação são: São Domingos do Sul, Nova Petrópolis e Picada Café. Entretanto, destes 30 municípios listados, podemos destacar dentre elas as que possuem maior população, sendo Ijuí e Erechim.
+
+Notem que Porto Alegre não figura nesta lista, uma vez que se encontra no 325º lugar.</font>
+
+```{r echo = F, warning = F, message = F}
+tabela1 %>%
+  mutate(posicao = row_number()) %>%
+  filter(nome == 'Porto Alegre') %>%
+  kable()
+```
+
+<font size="3%" text-align="middle">Nesta mesma análise podemos identificar que a maioria das cidades encontram-se entre os grupos 2 - Alto e 3 - Médio.</font>
+
+```{r echo = F, warning = F, message = F}
+idese_educacao %>%
+  ggplot(aes(x = classificacao_educacao, fill = cor_educacao)) +
+  geom_bar(width = 0.8, show.legend = FALSE)
+```
+
+<font size="3%" text-align="middle">Avaliamos abaixo também se existe correlação entre o tamanho da população, onde a população é maior que 10000 habitantes, e o índice de educação e constatamos que não há relação entre as informações, uma vez que os dados são bastante dispersos no que diz respeito à Educação X População. Removemos 'Porto Alegre' da análise no intuito de conseguir visualizar melhor a escala de população para as demais cidades, umas vez que a capital possui uma população muito maior que as demais.</font>
+
+```{r echo = F, warning = F, message = F}
+idese_educacao %>%
+  filter(populacao > 10000, nome != "Porto Alegre") %>%
+  ggplot(aes(x = bloco_educacao, y = populacao, colour = classificacao_educacao)) +
+  geom_point(size = 1.5) +
+  labs(
+    title = "Análise de relação entre Educação e População",
+    x = "Educação",
+    y = "População",
+    color = "Legenda"
+  )
+
+
+```
+
+<font size="3%" text-align="middle">Na tentativa de avaliar outras hipóteses, tais como a relação do índice de Educação entre Pré-escola, Ensino Fundamental, Ensino Médio e Escolaridade Adulta, percebe-se que os níveis escolares também não possuem influência um com o outro, ou seja, por melhor que sejam os investimentos nas séries iniciais, isto não garante a mesma continuidade do índice nas séries seguintes.
+
+<font size="3%" text-align="middle">Pode-se perceber que a correlação entre os níveis escolares é muito baixa. Assim, não se pode afirmar que o desempenho é mantido de uma faixa etária de ensino para outra. A relação entre o ensino pré-escolar e o ensino fundamental, por exemplo, é a que apresenta o maior valor entre elas - que é razoavelmente bom, mas ainda assim baixa (0.348), enquanto que a medida que o nível escolar aumenta, a correlação dimunui cada vez mais.</font>
+
+
+</font>
+
+1. Pré-escola X Fundamental
+
+```{r echo = F, warning = F, message = F}
+idese_educacao %>%
+  ggplot(aes(x = bloco_educacao_pre_escola, y = bloco_educacao_ensino_fundamental)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method="lm", se=FALSE) +
+  labs(
+    title = "Análise de relação entre Pré-escola e Ensino Fundamental",
+    x = "Pré-escola",
+    y = "Ensino Fundamental"
+  )
+```
+
+2. Fundamental X Médio
+
+```{r echo = F, warning = F, message = F}
+idese_educacao %>%
+  ggplot(aes(x = bloco_educacao_ensino_fundamental, y = bloco_educacao_ensino_medio)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method="lm", se=FALSE) +
+  labs(
+    title = "Análise de relação entre Ensino Fundamental e Ensino Médio",
+    x = "Ensino Fundamental",
+    y = "Ensino Médio"
+  )
+```
+
+3. Médio X Escolaridade Adulta
+
+```{r echo = F, warning = F, message = F}
+idese_educacao %>%
+  ggplot(aes(x = bloco_educacao_ensino_medio, y = bloco_educacao_escolaridade_adulta)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method="lm", se=FALSE) +
+  labs(
+    title = "Análise de relação entre Ensino Médio e Escolaridade Adulta",
+    x = "Ensino Médio",
+    y = "Escolaridade Adulta"
+  )
+
+pre <- data.frame()
+pre <- idese_educacao$bloco_educacao_pre_escola
+fund <- data.frame()
+fund <- idese_educacao$bloco_educacao_ensino_fundamental
+med <- data.frame()
+med <- idese_educacao$bloco_educacao_ensino_medio
+adu <- data.frame()
+adu <- idese_educacao$bloco_educacao_escolaridade_adulta
+
+cor_pre_fund <- cor(pre, fund, use = "complete.obs")
+cor_fund_med <- cor(fund, med, use = "complete.obs") 
+cor_med_adu <- cor(med, adu, use = "complete.obs")
+```
+
+
+Coeficiente de correlação Pré-escola e Ensino Fundamental:
+```{r echo = F, warning = F, message = F} 
+cor_pre_fund 
+```
+
+Coeficiente de correlação Ensino Fundamental e Ensino Médio:
+```{r echo = F, warning = F, message = F} 
+cor_fund_med
+```
+
+Coeficiente de correlação Ensino Médio e Escolaridade Adulta:
+```{r echo = F, warning = F, message = F} 
+cor_med_adu
+```
+
+
+<font size="3%" text-align="middle">Dentre as médias entre os níveis de ensino do RS constatamos que o nível que possui maior índice é a Pré-Escola (0.8864243), com desvio padrão de 0.1350449.</font>
+
+
+```{r echo = F, warning = F, message = F}
+tabela2 <- idese_educacao
+tabela2$geometry <- NULL
+
+tabela2 %>%
+  group_by() %>%
+  summarise(pre_escola = mean(bloco_educacao_pre_escola),
+            desv_pre_escola = sd(bloco_educacao_pre_escola),
+            fundamental = mean(bloco_educacao_ensino_fundamental),
+            desv_fundamental = sd(bloco_educacao_ensino_fundamental),
+            medio = mean(bloco_educacao_ensino_medio),
+            desv_medio = sd(bloco_educacao_ensino_medio),
+            escolaridade_adulta = mean(bloco_educacao_escolaridade_adulta),
+            desv_adulta = sd(bloco_educacao_escolaridade_adulta)) %>%
+  kable()
+```
+
+<font size="3%" text-align="middle">Por fim, avaliamos quais as cidades com maior aumento do índice de Educação entre os anos de 2007 e 2014 e constatamos abaixo os municípios campeões nesta evolução.</font>
+
+```{r echo = F, warning = F, message = F}
+idese_2007 <- data.frame(idese[, c("nome","bloco_educacao","ano")]) %>%
+  filter(ano == 2007)
+idese_2007$geometry <- NULL
+
+idese_2014 <- data.frame(idese[, c("nome","bloco_educacao","ano")]) %>%
+  filter(ano == 2014)
+idese_2014$geometry <- NULL
+
+idese_comparacao <- idese_2007 %>% 
+  inner_join(idese_2014,
+  by = c("nome" = "nome")) %>%
+  mutate(diferenca = round((bloco_educacao.y - bloco_educacao.x),7),
+         percentual = round((bloco_educacao.y / bloco_educacao.x)-1,7))
+
+idese_comparacao %>%
+  arrange(desc(diferenca)) %>%
+  head() %>%
+  kable()
+```
+
+## Bloco Renda
+
+<font size="3%" text-align="middle">Para o Bloco de Renda, considerando os dados do ano mais recente da base de dados (2014), temos a seguinte distribuição do índice geral.</font>
+
+```{r echo = F, warning = F, message = F}
+idese_renda <- idese1 %>%
+  filter(ano == 2014) %>%
+  mutate(classificacao_renda = as.factor(ifelse(bloco_renda >= 0.8, yes = '1 - Muito Alto',
+                                       no = ifelse(bloco_renda >= 0.7, yes = '2 - Alto',
+                                       no = ifelse(bloco_renda >= 0.6, yes = '3 - Médio',
+                                       no = ifelse(bloco_renda >= 0.5, yes = '4 - Baixo',
+                                       no = '5 - Muito Baixo')))))) %>%
+  mutate(cor_renda = ifelse(classificacao_renda == '1 - Muito Alto', yes = '#006400',
+                   no = ifelse(classificacao_renda == '2 - Alto', yes = '#228b22',
+                   no = ifelse(classificacao_renda == '3 - Médio', yes = '#ffff40',
+                   no = ifelse(classificacao_renda == '4 - Baixo', yes = '#ff8c00',
+                   no = '#8b0000')))))
+
+tooltip <- sprintf("Cidade: <strong>%s</strong><br>
+                   <br>Índice de Renda: <strong>%s</strong><br>",
+                   idese_renda$nome,
+                   idese_renda$bloco_renda)
+
+qpal <- colorFactor(palette = cores_escala, escala) 
+  
+mapa2 <- leaflet(idese_renda) %>%
+   addProviderTiles(providers$CartoDB.Positron) %>%
+   addTiles() %>%
+   addPolygons(color      = ~cor_renda,
+              stroke      = F,
+              weight      = 0.1,
+              fillOpacity = 0.7,
+              popup       = tooltip) %>%
+    addLegend("bottomleft",
+              pal = qpal,
+              values = escala,
+              title = "Índice de Renda")
+
+mapa2
+```
+
+<font size="3%" text-align="middle">Observa-se nos dados apresentados que a região mais favorecida em se tratando de Renda envolve boa parte do **Planalto Meridional**, como podemos visualizar na imagem abaixo.</font>
+
+<center>
+<img src = "../img/Mapa_regioes_RS.jpg" width="50%" heigth="50%">
+</center>
+
+<font size="3%" text-align="middle">Identificamos algumas cidades com baixíssimo índice de Renda, as quais seguem.</font>
+
+```{r echo = F, warning = F, message = F}
+tabela3 <- data.frame(idese_renda[, c("nome","bloco_renda","populacao","classificacao_renda")])
+tabela3$geometry <- NULL
+
+tabela3 %>%
+  filter(classificacao_renda == '5 - Muito Baixo') %>%
+  arrange(bloco_renda) %>%
+  mutate(posicao = row_number()) %>%
+  kable()
+```
+
+## Bloco Saúde
+
+<font size="3%" text-align="middle">Para o Bloco de Saúde, considerando os dados do ano mais recente da base de dados (2014) utilizamos a escala de cores Verde/Amarelo/Vermelho do maior ao menor índice sem segregarmos grupos por categoria, como fizemos nas análises anteriores, uma vez que temos grandes índices em quase todos os municípios.
+Nesta análise, obtivemos a seguinte distribuição do índice geral.</font>
+
+```{r echo = F, warning = F, message = F}
+idese_saude <- idese1 %>%
+  filter(ano == 2014) %>%
+  mutate(classificacao_saude = as.factor(ifelse(bloco_saude >= 0.8, yes = '1 - Muito Alto',
+                                       no = ifelse(bloco_saude >= 0.7, yes = '2 - Alto',
+                                       no = ifelse(bloco_saude >= 0.6, yes = '3 - Médio',
+                                       no = ifelse(bloco_saude >= 0.5, yes = '4 - Baixo',
+                                       no = '5 - Muito Baixo')))))) %>%
+  mutate(cor_saude = ifelse(classificacao_saude == '1 - Muito Alto', yes = '#006400',
+                   no = ifelse(classificacao_saude == '2 - Alto', yes = '#228b22',
+                   no = ifelse(classificacao_saude == '3 - Médio', yes = '#ffff40',
+                   no = ifelse(classificacao_saude == '4 - Baixo', yes = '#ff8c00',
+                   no = '#8b0000')))))
+
+tooltip <- sprintf("Cidade: <strong>%s</strong><br>
+                   <br>Índice de Saúde: <strong>%s</strong><br>",
+                   idese_saude$nome,
+                   idese_saude$bloco_saude)
+
+qpal <- colorNumeric("RdYlGn", idese_saude$bloco_saude)
+  
+mapa3 <- leaflet(idese_saude) %>%
+    addProviderTiles(providers$CartoDB.Positron) %>%
+    addTiles() %>%
+    addPolygons(color = ~qpal(bloco_saude),
+                stroke      = F,
+                weight      = 0.1,
+                fillOpacity = 0.7,
+                popup       = tooltip)
+
+mapa3
+```
+
+<font size="3%" text-align="middle">
+Dentre todas as cidades do RS, a mais deficitária no índice Saúde é **Pedro Osório**, com valor de **0,69** e **Uruguaiana**, com **0,70**. A maior concentração dos grandes resultados é nítida no **Planalto Meridional**.
+
+Neste mesmo Bloco, com relação à Longevidade, considerando a mesma escala Verde/Amarelo/Vermelho, temos a seguinte distribuição do índice geral.</font>
+
+```{r echo = F, warning = F, message = F}
+idese_saude_longevidade <- idese1 %>%
+  filter(ano == 2014) %>%
+  mutate(classificacao_saude_longevidade = as.factor(ifelse(bloco_saude_longevidade >= 0.8, yes = '1 - Muito Alto',
+                                       no = ifelse(bloco_saude_longevidade >= 0.7, yes = '2 - Alto',
+                                       no = ifelse(bloco_saude_longevidade >= 0.6, yes = '3 - Médio',
+                                       no = ifelse(bloco_saude_longevidade >= 0.5, yes = '4 - Baixo',
+                                       no = '5 - Muito Baixo')))))) %>%
+  mutate(cor_saude_longevidade = ifelse(classificacao_saude_longevidade == '1 - Muito Alto', yes = '#006400',
+                   no = ifelse(classificacao_saude_longevidade == '2 - Alto', yes = '#228b22',
+                   no = ifelse(classificacao_saude_longevidade == '3 - Médio', yes = '#ffff40',
+                   no = ifelse(classificacao_saude_longevidade == '4 - Baixo', yes = '#ff8c00',
+                   no = '#8b0000')))))
+
+tooltip <- sprintf("Cidade: <strong>%s</strong><br>
+                   <br>Índice de Longevidade: <strong>%s</strong><br>",
+                   idese_saude_longevidade$nome,
+                   idese_saude_longevidade$bloco_saude_longevidade)
+
+qpal <- colorNumeric("RdYlGn", idese_saude$bloco_saude_longevidade)
+  
+mapa4 <- leaflet(idese_saude_longevidade) %>%
+    addProviderTiles(providers$CartoDB.Positron) %>%
+    addTiles() %>%
+    addPolygons(color = ~qpal(bloco_saude_longevidade),
+                stroke      = F,
+                weight      = 0.1,
+                fillOpacity = 0.7,
+                popup       = tooltip)
+
+mapa4
+```
+
+<font size="3%" text-align="middle">As cidades em tom Verde mais escuro são as que apresentam uma longevidade com índice 1 ou muito próximo disso, tais como: **Maçambará**, **Chuí**, **Condor**, **Pinhal da Serra**, **Jacuizinho**, **Santa Cecília do Sul**, dentre outras.
+Já as cidades que se concentram mais no sul do estado, em tom alaranjado, são as que possuem os menores índices de longevidade.</font>
+
+## Evolução dos Blocos
+
+<font size="3%" text-align="middle">Para concluir a análise, verificamos um histórico geral de 2007 a 2014, traçando a evolução das médias dos 3 blocos estudados do RS (Educação, Renda e Saúde), além do IDESE Total.</font>
+
+```{r echo = F, warning = F, message = F}
+library(tidyr)
+
+tabela4 <- idese1 %>%
+  group_by(ano) %>%
+  summarise(bloco_educacao = mean(bloco_educacao),
+            bloco_renda = mean(bloco_renda),
+            bloco_saude = mean(bloco_saude),
+            idese = mean(idese))
+tabela4$geometry = NULL
+
+tabela_gether <- tabela4 %>% gather(indice, valor, c("bloco_educacao","bloco_renda","bloco_saude","idese"))
+
+tabela_gether %>%
+  ggplot(aes(x = ano, y = valor)) +
+  geom_line(aes(colour = indice))
+```
+
+<font size="3%" text-align="middle">Podemos perceber que o estado vem crescendo ao longo dos anos em todos os índices, com destaque para o crescimento da **Renda** e para a estabilidade alta da **Saúde**.</font>
+
+## Conclusão Final
+
+<font size="3%" text-align="middle">A partir da análise feita, percebe-se que o RS tem melhores índices nos três quesitos (saúde, renda e educação) mais concentrados na região do Plananto Meridional, que é a região mais centro-norte. Nessa área encontram-se os maiores índices de renda isoladamente, enquanto que os índices de saúde são mais uniformes no estado e os de educação são mais distribuídos, a renda se sobressai por estar com os maiores valores somente nessa área, com algumas excessões como Rio Grande, Aceguá e Santa Margarida do Sul.</font>
+
+# **Análise sobre a Felicidade no Mundo**
+
+<font size="3%" text-align="middle">Na segunda análise, utilizamos uma base onde temos o score de **Felicidade no Mundo**, pontuado de 0 a 10, além de informações relevantes para a pesquisa, onde temos como alguns exemplos: liberdade econômica, integridade do governo, liberdade de fazer negócios, independência financeira, entre outros.</font>
+
+<center>
+<img src = "../img/felicidade.jpeg" width="20%" heigth="20%">
+</center>
+
+
+## Onde encontramos a felicidade?
+
+<font size="3%" text-align="middle">Como primeira análise, realizamos uma distribuição do score de felicidade em 8 níveis ao longo de todo o mundo, no intuito de identificarmos os países com maiores e menores índices.</font>
+
+
+```{r echo = F, warning = F, message = F}
+library(rgdal)
+library(leaflet)
+library(viridis)
+
+download.file(file.path('http://www.naturalearthdata.com/http/',
+                        'www.naturalearthdata.com/download/50m/cultural',
+                        'ne_50m_admin_0_countries.zip'), 
+              f <- tempfile())
+unzip(f, exdir=tempdir())
+
+world <- readOGR(tempdir(), 'ne_50m_admin_0_countries', encoding='UTF-8')
+```
+
+
+```{r echo = F, warning = F, message = F}
+felicidade_2017 <- felicidade %>%
+  filter(index_year == 2017) %>%
+  mutate(.,name = as.factor(name))
+
+world %<>% 
+  st_as_sf() %>% 
+  mutate(.,BRK_NAME = as.factor(BRK_NAME))
+
+felicidade_2017 <- world %>% 
+  full_join(
+  y = felicidade_2017,
+  by = c("BRK_NAME" = "name"))
+  
+tooltip <- sprintf("País: <strong>%s</strong><br>
+                   <br>Score: <strong>%s</strong><br>",
+                   felicidade_2017$BRK_NAME,
+                   ifelse(is.na(felicidade_2017$happiness_score),'NA',felicidade_2017$happiness_score))
+
+#qpal <- colorQuantile(viridis(8), felicidade_2017$happiness_score, n = 8)
+qpal <- colorQuantile("RdYlGn", felicidade_2017$happiness_score, n = 8)
+
+mapa5 <- leaflet(felicidade_2017) %>%
+   addProviderTiles(providers$CartoDB.Positron) %>%
+   setView(lat = 51.1657, lng = 10.4515, zoom = 1) %>%
+   addTiles() %>%
+   addPolygons(color      = ~qpal(happiness_score),
+              stroke      = F,
+              weight      = 0.1,
+              fillOpacity = 0.7,
+              popup       = tooltip) %>%
+    addLegend("topright",
+              pal = qpal,
+              values = ~happiness_score,
+              title = "Score de Felicidade")
+mapa5
+```
+
+
+<font size="3%" text-align="middle">Constatamos que a Austrália, Canada, Estados Unidos, Islândia, Alemanha, Noruega, Nova Zelândia e os países da Península Escandinavia são destaques no que refere-se à felcidade. Em contrapartida, observa-se que muitos países do continente africano possui um score de felicidade bastante baixo.
+</font>
+
+## Quais principais fatores que influenciam na felicidade?
+
+<font size="3%" text-align="middle">Realizamos abaixo uma análise de correlação entre os direitos de propriedade, a integridade do governo e a falta de efetividade judicial nos países com o score de felicidade, considerando os resultados apresentados para o ano de 2017.</font>
+
+```{r echo = F, warning = F, message = F}
+felicidade_2017 %>%
+  ggplot(aes(x = property_rights, y = happiness_score)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method="lm", se=FALSE) +
+  labs(
+    title = "Análise de relação entre Direitos de Propriedade e Score de Felicidade",
+    x = "Propriedade",
+    y = "Felicidade"
+  )
+
+felicidade_2017 %>%
+  ggplot(aes(x = government_integrity, y = happiness_score)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method="lm", se=FALSE) +
+  labs(
+    title = "Análise de relação entre Integridade do Governo e Score de Felicidade",
+    x = "Integridade",
+    y = "Felicidade"
+  )
+
+felicidade_2017 %>%
+  ggplot(aes(x = judicial_effectiveness, y = happiness_score)) +
+  geom_point(size = 1.5) +
+  geom_smooth(method="lm", se=FALSE) +
+  labs(
+    title = "Análise de relação entre Efetividade Judicial e Score de Felicidade",
+    x = "Efet. Judicial",
+    y = "Felicidade"
+  )
+
+int <- data.frame()
+int <- felicidade_2017$government_integrity
+prop <- data.frame()
+prop <- felicidade_2017$property_rights
+jud <- data.frame()
+jud <- felicidade_2017$judicial_effectiveness
+fel <- data.frame()
+fel <- felicidade_2017$happiness_score
+
+cor_jud <- cor(fel, jud, use = "complete.obs")
+cor_int <- cor(fel, int, use = "complete.obs") 
+cor_prop <- cor(fel, prop, use = "complete.obs")
+```
+
+Coeficiente de correlação Efetividade Judicial x Score de Felicidade:
+```{r echo = F, warning = F, message = F} 
+cor_jud 
+```
+
+Coeficiente de correlação Integridade do Governo x Score de Felicidade:
+```{r echo = F, warning = F, message = F} 
+cor_int 
+```
+
+Coeficiente de correlação Direitos de Propriedade x Score de Felicidade:
+```{r echo = F, warning = F, message = F} 
+cor_prop 
+```
+
+<font size="3%" text-align="middle">Nota-se que existe relação positiva dos 3 índices com a felicidade, uma vez que em grande parte dos países com bons resultados nestes dados, também temos altos índices de felicidade.
+
+</font>
+
+## Análise da Felicidade nos Continentes
+
+<font size="3%" text-align="middle">Tendo em vista os resultados, pode-se notar que os continentes da Oceania e América do Norte são os mais felizes no mundo. Já na América Latina temos rankings muito parecidos entre quase todos os países, apenas com o Peru como destaque negativo. Abaixo apresentamos todas as estatísticas de cada continente.</font>
+
+```{r echo = F, warning = F, message = F} 
+continentes <- felicidade_2017 %>%
+  filter(CONTINENT != 'NA', happiness_score != 'NA') %>%
+  group_by(CONTINENT, SUBREGION, REGION_WB) %>%
+  summarise(paises = n(),
+            media = mean(happiness_score, na.rm=TRUE),
+            maximo = max(happiness_score, na.rm=TRUE),
+            minimo = min(happiness_score, na.rm=TRUE),
+            mediana = median(happiness_score, na.rm=TRUE),
+            desvio_padrao = sd(happiness_score, na.rm=TRUE))
+continentes$geometry = NULL
+
+continentes %>%
+  arrange(desc(media)) %>%
+  kable()
+```
+
+<font size="3%" text-align="middle">Como já mencionado anteriormente, o continente africano aparece como o mais infeliz do mundo, apresentando a grande maioria dos países com score abaixo de 50%.</font>
+
+## Conclusão Final
+
+<font size="3%" text-align="middle">Com a análise realizada, pode-se perceber que os países que estão mais comprometidos com: 
+
+- defender o direito à propriedade privada, garantindo que a autonomia e a posse dos bens adquiridos pelo cidadão sejam de fato invioláveis;
+
+- ser e manter um governo fiel e íntegro, onde não haja imoralidade e corrupção;
+
+- um eficaz sistema do poder judicial, garantindo que presos condenados por anos fiquem de fato cumprindo sua pena integralmente.
+
+São países mais felizes.
+
+Podemos concluir, e traçar seguramente um paralelo com a felicidade, que os países mais felizes possuem altos índices nesses três pontos avaliados.</font>
